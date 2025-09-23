@@ -32,6 +32,7 @@ async function run() {
     const usersCollection = db.collection('users');
     const postsCollection = db.collection('posts');
     const tagsCollection = db.collection('tags');
+    const commentsCollection = db.collection('comments');
 
     console.log("MongoDB connected");
 
@@ -57,6 +58,17 @@ async function run() {
         res.status(500).json({ message: "Server error", error: error.message });
       }
     });
+    app.get("/users/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const user = await usersCollection.findOne({ email });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 
     // ------------------ POSTS APIs ------------------
     // Create post
@@ -100,6 +112,9 @@ async function run() {
       }
     });
 
+
+
+
     // Get single post by ID
     app.get("/posts/:id", async (req, res) => {
       try {
@@ -113,42 +128,113 @@ async function run() {
     });
 
     // Get posts by user
-    app.get("/user-posts/:email", async (req, res) => {
-      try {
-        const { email } = req.params;
-        const posts = await postsCollection.find({ authorEmail: email }).sort({ createdAt: -1 }).toArray();
-        res.json(posts);
-      } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
-      }
-    });
+   app.get("/user-posts/:email", async (req, res) => {
+  const { email } = req.params;
 
-    // ------------------ TAGS APIs ------------------
-    // Create tags (predefined)
-    app.post("/tags", async (req, res) => {
-      try {
-        const tags = req.body.tags; // Array of strings
-        if (!tags || !Array.isArray(tags)) return res.status(400).json({ message: "Tags array is required" });
-
-        const existing = await tagsCollection.find().toArray();
-        if (existing.length > 0) return res.status(400).json({ message: "Tags already exist" });
-
-        await tagsCollection.insertMany(tags.map(tag => ({ name: tag })));
-        res.status(201).json({ message: "Tags added successfully" });
-      } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
-      }
-    });
-
-    // Get tags
-  app.get("/tags", async (req, res) => {
   try {
-    const tags = await tagsCollection.find().toArray();
-    res.json(tags); // returns array of objects { name: 'Technology' }
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    const posts = await postsCollection.aggregate([
+      { $match: { authorEmail: email } },
+      {
+        $lookup: {
+          from: "comments",
+          let: { postId: { $toString: "$_id" } }, // convert _id to string
+          pipeline: [
+            { $match: { $expr: { $eq: ["$postId", "$$postId"] } } }, 
+          ],
+          as: "comments",
+        },
+      },
+      {
+        $addFields: {
+          commentCount: { $size: "$comments" },
+        },
+      },
+      {
+        $project: { comments: 0 }, 
+      },
+      { $sort: { createdAt: -1 } }
+    ]).toArray();
+
+    res.json(posts);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 });
+
+      // Delete a post
+    app.delete("/posts/:id", async (req, res) => {
+      const { id } = req.params;
+      try {
+        const result = await postsCollection.deleteOne({ _id: new ObjectId(id) });
+        if (result.deletedCount === 0)
+          return res.status(404).json({ error: "Post not found" });
+        res.json({ message: "Post deleted successfully" });
+      } catch (err) {
+        res.status(500).json({ error: "Invalid ID" });
+      }
+    });
+
+app.patch("/posts/vote/:id", async (req, res) => {
+  const { id } = req.params;
+  const { type, userEmail } = req.body; // type = "upvote" | "downvote"
+
+  if (!["upvote", "downvote"].includes(type)) {
+    return res.status(400).json({ error: "Invalid vote type" });
+  }
+
+  if (!userEmail) {
+    return res.status(400).json({ error: "User email is required" });
+  }
+
+  try {
+    const post = await postsCollection.findOne({ _id: new ObjectId(id) });
+    if (!post) return res.status(404).json({ error: "Post not found" });
+
+    // Track votes by user
+    const votes = post.votes || []; // Array of { userEmail, voteType }
+    const existingVote = votes.find(v => v.userEmail === userEmail);
+
+    let upVote = post.upVote || 0;
+    let downVote = post.downVote || 0;
+    let newVotes;
+
+    if (!existingVote) {
+      // First-time vote
+      newVotes = [...votes, { userEmail, voteType: type }];
+      if (type === "upvote") upVote++;
+      else downVote++;
+    } else if (existingVote.voteType === type) {
+      // Remove existing vote
+      newVotes = votes.filter(v => v.userEmail !== userEmail);
+      if (type === "upvote") upVote--;
+      else downVote--;
+    } else {
+      // Switch vote
+      newVotes = votes.map(v => v.userEmail === userEmail ? { ...v, voteType: type } : v);
+      if (type === "upvote") {
+        upVote++;
+        downVote--;
+      } else {
+        downVote++;
+        upVote--;
+      }
+    }
+
+    await postsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { upVote, downVote, votes: newVotes } }
+    );
+
+    res.json({ upVote, downVote });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+   
+
 
     console.log("APIs ready ✅");
 
