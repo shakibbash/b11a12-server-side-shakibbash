@@ -233,7 +233,171 @@ app.patch("/posts/vote/:id", async (req, res) => {
   }
 });
 
-   
+    // ------------------ TAGS APIs ------------------
+    // Create tags (predefined)
+    app.post("/tags", async (req, res) => {
+      try {
+        const tags = req.body.tags; // Array of strings
+        if (!tags || !Array.isArray(tags)) return res.status(400).json({ message: "Tags array is required" });
+
+        const existing = await tagsCollection.find().toArray();
+        if (existing.length > 0) return res.status(400).json({ message: "Tags already exist" });
+
+        await tagsCollection.insertMany(tags.map(tag => ({ name: tag })));
+        res.status(201).json({ message: "Tags added successfully" });
+      } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
+
+    // Get tags
+  app.get("/tags", async (req, res) => {
+  try {
+    const tags = await tagsCollection.find().toArray();
+    res.json(tags); // returns array of objects { name: 'Technology' }
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
+
+                                         // comments api
+// Get comments by postId
+app.get("/comments", async (req, res) => {
+  try {
+    const { postId } = req.query;
+    const comments = await commentsCollection.find({ postId }).sort({ createdAt: 1 }).toArray();
+    res.json(comments); // frontend handles nesting using parentId
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+// Count comments for a post
+
+
+// Add comment
+// Add comment or reply
+app.post("/comments", async (req, res) => {
+  try {
+    const { postId, text, userEmail, userName, userPhoto, parentId = null } = req.body;
+    if (!postId || !text || !userEmail) return res.status(400).json({ message: "Missing fields" });
+
+    const newComment = {
+      postId,
+      parentId,
+      text,
+      userEmail,
+      userName,
+      userPhoto,
+      upvotes: 0,
+      downvotes: 0,
+      reported: false,
+      feedback: [],
+      replies: [],
+      createdAt: new Date(),
+    };
+
+    const result = await commentsCollection.insertOne(newComment);
+    res.status(201).json({ message: "Comment added", commentId: result.insertedId });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+// PATCH /comments/vote/:id
+app.patch("/comments/vote/:id", async (req, res) => {
+  const { id } = req.params;
+  const { type, userEmail } = req.body; // 'upvote' or 'downvote'
+  const comment = await commentsCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!comment) return res.status(404).send({ error: "Comment not found" });
+
+  let upvoters = comment.upvoters || [];
+  let downvoters = comment.downvoters || [];
+
+  if (type === "upvote") {
+    if (upvoters.includes(userEmail)) {
+      // remove upvote (toggle)
+      upvoters = upvoters.filter(u => u !== userEmail);
+    } else {
+      upvoters.push(userEmail);
+      downvoters = downvoters.filter(u => u !== userEmail); // remove downvote
+    }
+  } else if (type === "downvote") {
+    if (downvoters.includes(userEmail)) {
+      // remove downvote (toggle)
+      downvoters = downvoters.filter(u => u !== userEmail);
+    } else {
+      downvoters.push(userEmail);
+      upvoters = upvoters.filter(u => u !== userEmail); // remove upvote
+    }
+  }
+
+  const result = await commentsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { upvoters, downvoters, upvotes: upvoters.length, downvotes: downvoters.length } }
+  );
+
+  res.send(result);
+});
+
+
+
+
+app.patch("/comments/report/:id", async (req, res) => {
+  try {
+    await commentsCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { reported: true } }
+    );
+    res.json({ message: "Comment reported" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Delete comment (only owner)
+app.delete("/comments/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userEmail } = req.body; // frontend must send the email of logged-in user
+
+    const comment = await db.collection("comments").findOne({ _id: new ObjectId(id) });
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    if (comment.userEmail !== userEmail) {
+      return res.status(403).json({ message: "You can only delete your own comment" });
+    }
+
+    await db.collection("comments").deleteOne({ _id: new ObjectId(id) });
+    res.json({ message: "Comment deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+// Edit comment (only owner)
+app.patch("/comments/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text, userEmail } = req.body; // frontend must send logged-in user's email
+    if (!text) return res.status(400).json({ message: "Text is required" });
+
+    const comment = await commentsCollection.findOne({ _id: new ObjectId(id) });
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    if (comment.userEmail !== userEmail) {
+      return res.status(403).json({ message: "You can only edit your own comment" });
+    }
+
+    await commentsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { text } }
+    );
+
+    res.json({ message: "Comment updated successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 
 
     console.log("APIs ready ✅");
