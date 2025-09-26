@@ -3,6 +3,7 @@ const dotenv = require('dotenv');
 dotenv.config(); 
 const express = require('express');
 const cors = require('cors');
+const stripe = require('stripe')(process.env.SECRET_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const app = express();
@@ -33,6 +34,7 @@ async function run() {
     const postsCollection = db.collection('posts');
     const tagsCollection = db.collection('tags');
     const commentsCollection = db.collection('comments');
+     const paymentsCollection = db.collection('payments');
 
     console.log("MongoDB connected");
 
@@ -69,38 +71,63 @@ async function run() {
   }
 });
 
+// Update user by email
+app.put("/users/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const updateData = req.body;
 
+    const result = await usersCollection.updateOne(
+      { email },
+      { $set: updateData },
+      { upsert: false } 
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({ message: "User updated successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
     // ------------------ POSTS APIs ------------------
     // Create post
-    app.post("/posts", async (req, res) => {
-      try {
-        const postData = req.body;
-        if (!postData.authorEmail || !postData.title) {
-          return res.status(400).json({ message: "authorEmail and title are required" });
-        }
+   // Create post
+app.post("/posts", async (req, res) => {
+  try {
+    const postData = req.body;
 
-        // Count user posts
-        const userPostsCount = await postsCollection.countDocuments({ authorEmail: postData.authorEmail });
+    // Check required fields
+    if (!postData.authorEmail || !postData.title) {
+      return res.status(400).json({ message: "authorEmail and title are required" });
+    }
 
-        // Limit for normal users: 5 posts
-        const user = await usersCollection.findOne({ email: postData.authorEmail });
-        if (!user) return res.status(404).json({ message: "User not found" });
+    // Find the user in the database
+    const user = await usersCollection.findOne({ email: postData.authorEmail });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-        if (!user.membership && userPostsCount >= 5) {
-          return res.status(403).json({ message: "Post limit reached. Become a member to post more." });
-        }
+    // Count the number of posts by this user
+    const userPostsCount = await postsCollection.countDocuments({ authorEmail: postData.authorEmail });
 
-        // Default votes
-        postData.upVote = 0;
-        postData.downVote = 0;
-        postData.createdAt = new Date();
+    // Enforce post limit for non-members
+    if (!user.membership && userPostsCount >= 5) {
+      return res.status(403).json({ message: "Post limit reached. Become a member to post more." });
+    }
 
-        const result = await postsCollection.insertOne(postData);
-        res.status(201).json({ message: "Post created successfully", postId: result.insertedId });
-      } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
-      }
-    });
+    // Default votes and timestamp
+    postData.upVote = 0;
+    postData.downVote = 0;
+    postData.createdAt = new Date();
+
+    // Insert the post
+    const result = await postsCollection.insertOne(postData);
+    res.status(201).json({ message: "Post created successfully", postId: result.insertedId });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
 
     // Get all posts
     app.get("/posts", async (req, res) => {
@@ -397,7 +424,58 @@ app.patch("/comments/:id", async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
+ 
+                                 //Payments related apis
 
+// Create membership intent
+app.post("/create-membership-intent", async (req, res) => {
+  try {
+    const { amountInCents, membershipType, userId } = req.body;
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInCents,
+      currency: "usd",
+      metadata: { membershipType, userId },
+    });
+
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save membership payment and update user badge
+app.post("/membership-payments", async (req, res) => {
+  try {
+    const payment = req.body;
+
+    // 1️⃣ Insert payment into payments collection
+    const result = await paymentsCollection.insertOne(payment);
+
+    // 2️⃣ Update the corresponding user's membership and badge in users collection
+    const userUpdate = await usersCollection.updateOne(
+      { uid: payment.userId }, // match by UID
+      { $set: { membership: true, badge: "gold" } }
+    );
+
+    if (userUpdate.matchedCount === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found, but payment recorded" 
+      });
+    }
+
+    // 3️⃣ Return success
+    res.json({ 
+      success: true, 
+      insertedId: result.insertedId, 
+      message: "Payment recorded and user membership updated successfully" 
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
 
 
     console.log("APIs ready ✅");
