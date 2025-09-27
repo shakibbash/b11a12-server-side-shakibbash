@@ -38,6 +38,23 @@ async function run() {
 
     console.log("MongoDB connected");
 
+// ------------------ ADMIN APIs ------------------
+app.get("/admin/stats", async (req, res) => {
+  try {
+    const totalUsers = await usersCollection.countDocuments();
+    const totalPosts = await postsCollection.countDocuments();
+    const totalComments = await commentsCollection.countDocuments();
+
+    res.json({
+      totalUsers,
+      totalPosts,
+      totalComments,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
     // ------------------ USERS APIs ------------------
     app.post("/users", async (req, res) => {
       try {
