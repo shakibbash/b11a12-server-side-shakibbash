@@ -38,7 +38,50 @@ async function run() {
 
     console.log("MongoDB connected");
 
+
+    // Middleware: verifyAdmin
+// const verifyAdmin = async (req, res, next) => {
+//   try {
+
+//     const email = req.user?.email;  
+//     if (!email) {
+//       return res.status(401).send({ message: "Unauthorized Access" });
+//     }
+
+//     // Check user in DB
+//     const user = await usersCollection.findOne({ email });
+//     if (!user || user.role !== "admin") {
+//       return res.status(403).send({ message: "Forbidden Access" });
+//     }
+
+//     // If admin, continue
+//     next();
+//   } catch (error) {
+//     console.error("verifyAdmin error:", error);
+//     res.status(500).send({ message: "Server Error" });
+//   }
+// };
+
 // ------------------ ADMIN APIs ------------------
+// GET all users with optional search by username
+app.get("/users", async (req, res) => {
+  try {
+    const search = req.query.search || ""; // ?search=john
+
+    // Use regex for case-insensitive search
+    const query = search
+      ? { name: { $regex: search, $options: "i" } }
+      : {};
+
+    const users = await usersCollection.find(query).toArray();
+    res.send(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).send({ message: "Server Error" });
+  }
+});
+
+
 app.get("/admin/stats", async (req, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
@@ -51,6 +94,28 @@ app.get("/admin/stats", async (req, res) => {
       totalComments,
     });
   } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Toggle user role (admin <-> user)
+app.patch("/admin/users/:id/toggle-role", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const newRole = user.role === "admin" ? "user" : "admin";
+
+    await usersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { role: newRole } }
+    );
+
+    res.json({ message: `User role updated to ${newRole}`, role: newRole });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
@@ -110,7 +175,7 @@ app.put("/users/:email", async (req, res) => {
   }
 });
     // ------------------ POSTS APIs ------------------
-    // Create post
+
    // Create post
 app.post("/posts", async (req, res) => {
   try {
@@ -279,20 +344,27 @@ app.patch("/posts/vote/:id", async (req, res) => {
 
     // ------------------ TAGS APIs ------------------
     // Create tags (predefined)
-    app.post("/tags", async (req, res) => {
-      try {
-        const tags = req.body.tags; // Array of strings
-        if (!tags || !Array.isArray(tags)) return res.status(400).json({ message: "Tags array is required" });
+ app.post("/tags", async (req, res) => {
+  try {
+    const tags = req.body.tags; // expects array
+    if (!tags || !Array.isArray(tags)) {
+      return res.status(400).json({ message: "Tags array is required" });
+    }
 
-        const existing = await tagsCollection.find().toArray();
-        if (existing.length > 0) return res.status(400).json({ message: "Tags already exist" });
+    const newTags = tags.map((t) => ({ name: t }));
 
-        await tagsCollection.insertMany(tags.map(tag => ({ name: tag })));
-        res.status(201).json({ message: "Tags added successfully" });
-      } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
-      }
-    });
+    // insert only non-duplicate names
+    for (let tag of newTags) {
+      const exists = await tagsCollection.findOne({ name: tag.name });
+      if (exists) continue;
+      await tagsCollection.insertOne(tag);
+    }
+
+    res.status(201).json({ message: "Tags added successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
 
     // Get tags
   app.get("/tags", async (req, res) => {
@@ -304,6 +376,24 @@ app.patch("/posts/vote/:id", async (req, res) => {
   }
 });
 
+
+app.delete("/tags/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid tag ID" });
+    }
+
+    const result = await tagsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: "Tag not found" });
+    }
+
+    res.json({ message: "Tag deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
                                          // comments api
 // Get comments by postId
 app.get("/comments", async (req, res) => {
