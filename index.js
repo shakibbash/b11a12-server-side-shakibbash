@@ -23,7 +23,7 @@ const client = new MongoClient(uri, {
   },
 });
 
-let db, usersCollection, postsCollection, tagsCollection, commentsCollection, paymentsCollection, announcementsCollection;
+let db, usersCollection, postsCollection, tagsCollection,notificationsCollection, commentsCollection, paymentsCollection, announcementsCollection,reportsCollection;
 
 async function run() {
   try {
@@ -36,8 +36,63 @@ async function run() {
     commentsCollection = db.collection('comments');
     paymentsCollection = db.collection('payments');
     announcementsCollection = db.collection('announcements');
+    reportsCollection = db.collection("reports");
+    notificationsCollection = db.collection("notifications"); 
 
     console.log("MongoDB connected");
+
+// notifications apis
+    app.get("/notifications/:userEmail", async (req, res) => {
+  try {
+    const { userEmail } = req.params;
+    const notifications = await notificationsCollection
+      .find({ userEmail })
+      .sort({ date: -1 })
+      .toArray();
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+app.patch("/notifications/:id/read", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await notificationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { read: true } }
+    );
+    res.json({ message: "Notification marked as read" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.patch("/notifications/:email/read-all", async (req, res) => {
+  try {
+    const { email } = req.params;
+    await notificationsCollection.updateMany(
+      { userEmail: email },
+      { $set: { read: true } }
+    );
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.delete("/notifications/:email/clear-all", async (req, res) => {
+  try {
+    const { email } = req.params;
+    await notificationsCollection.deleteMany({ userEmail: email });
+    res.json({ message: "All notifications cleared" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
     // ------------------ ADMIN APIs ------------------
     // Get all users with optional search
@@ -77,6 +132,58 @@ async function run() {
         res.status(500).json({ message: "Server error", error: err.message });
       }
     });
+
+    // Get all reported comments
+app.get("/admin/reports", async (req, res) => {
+  try {
+    const reports = await reportsCollection.find().sort({ date: -1 }).toArray();
+    // Optionally, populate comment details
+   const populatedReports = await Promise.all(
+  reports.map(async (r) => {
+    const comment = await commentsCollection.findOne({ _id: new ObjectId(r.commentId) });
+    return { ...r, commentId: comment || null };  // fallback if comment deleted
+  })
+);
+res.json(populatedReports);
+;
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Take action on a report
+app.patch("/admin/reports/:id/action", async (req, res) => {
+  try {
+    const { action } = req.body; // "Reviewed", "DeleteComment", "WarnUser", "Dismiss"
+    const { id } = req.params;
+
+    const report = await reportsCollection.findOne({ _id: new ObjectId(id) });
+    if (!report) return res.status(404).json({ message: "Report not found" });
+
+    switch(action) {
+      case "Reviewed":
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "Reviewed" } });
+        break;
+      case "DeleteComment":
+        await commentsCollection.deleteOne({ _id: new ObjectId(report.commentId) });
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "ActionTaken" } });
+        break;
+      case "WarnUser":
+        // Optional: store warning in usersCollection
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "ActionTaken" } });
+        break;
+      case "Dismiss":
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "Dismissed" } });
+        break;
+      default:
+        return res.status(400).json({ message: "Invalid action" });
+    }
+
+    res.json({ message: "Action taken successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
 
     // ------------------ USER APIs ------------------
     // Create or update user
@@ -402,15 +509,51 @@ app.get("/tags/with-counts", async (req, res) => {
       res.send(result);
     });
 
-    // Report comment
-    app.patch("/comments/report/:id", async (req, res) => {
-      try {
-        await commentsCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: { reported: true } });
-        res.json({ message: "Comment reported" });
-      } catch (err) {
-        res.status(500).json({ message: "Server error" });
-      }
+    
+ // Report comment
+app.patch("/comments/report/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userEmail, reason } = req.body;
+
+    if (!userEmail || !reason) {
+      return res.status(400).json({ message: "userEmail and reason are required" });
+    }
+
+    // Find the reported comment
+    const comment = await commentsCollection.findOne({ _id: new ObjectId(id) });
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    // Mark comment as reported
+    await commentsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { reported: true } }
+    );
+
+    // Insert into reports collection
+    await reportsCollection.insertOne({
+      commentId: id,
+      reportedBy: userEmail,
+      reason,
+      date: new Date(),
+      status: "Pending"
     });
+
+    // *** NEW: create a notification for the comment author ***
+    await notificationsCollection.insertOne({
+      userEmail: comment.userEmail, // the user who made the comment
+      message: `Your comment has been reported for: "${reason}"`,
+      date: new Date(),
+      read: false,
+    });
+
+    res.json({ message: "Comment reported and notification sent successfully" });
+  } catch (err) {
+    console.error("Report comment error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 
     // Edit comment
     app.patch("/comments/:id", async (req, res) => {
