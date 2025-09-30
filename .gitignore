@@ -1,3 +1,4 @@
 node_modules
 .env
 forum-x-auth-firebase-admin-key.json
+.vercel
