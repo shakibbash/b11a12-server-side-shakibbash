@@ -60,7 +60,7 @@ async function run() {
 
       // Custom MiddleWares
     const verifyFirebaseToken = async(req , res , next) => {
-      console.log("Headers in middleware : " , req.headers)
+      // console.log("Headers in middleware : " , req.headers)
       const authHeader = req.headers.authorization;
 
       if(!authHeader) {
@@ -77,7 +77,7 @@ async function run() {
         // Verify The Token
         const decodedToken = await admin.auth().verifyIdToken(token);
         req.user = decodedToken;
-        console.log("Decoded token:", decodedToken);
+        
         next();
       } catch (error) {
         console.error('Token verification failed:', error);
@@ -277,7 +277,7 @@ app.patch("/admin/reports/:id/action",  verifyFirebaseToken, verifyAdmin, async 
     });
 
     // Update user
-    app.put("/users/:email",verifyFirebaseToken, async (req, res) => {
+    app.put("/users/:email", async (req, res) => {
       try {
         const { email } = req.params;
         const updateData = req.body;
@@ -786,9 +786,7 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
 run().catch(console.dir);
 
 // ------------------ HEALTH CHECK ------------------
-app.get('/', (req, res) => {
-  res.send('Hello World!');
-});
+
 
 app.listen(port, () => {
   console.log(`Forum-X app listening on port ${port}`);
