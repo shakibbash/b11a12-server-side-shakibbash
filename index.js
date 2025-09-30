@@ -6,12 +6,26 @@ const cors = require('cors');
 const stripe = require('stripe')(process.env.SECRET_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
+const admin = require("firebase-admin");
 const app = express();
 const port = 3000;
 
+
 // ------------------ MIDDLEWARE ------------------
-app.use(cors());
+app.use(
+  cors({
+    origin: ['http://localhost:5173'], 
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 app.use(express.json());
+
+const serviceAccount = require("./forum-x-auth-firebase-admin-key.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
 
 // ------------------ MONGODB CONNECTION ------------------
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.oeuxqwy.mongodb.net/?retryWrites=true&w=majority`;
@@ -41,8 +55,51 @@ async function run() {
 
     console.log("MongoDB connected");
 
+
+      // Custom MiddleWares
+    const verifyFirebaseToken = async(req , res , next) => {
+      console.log("Headers in middleware : " , req.headers)
+      const authHeader = req.headers.authorization;
+
+      if(!authHeader) {
+        return res.status(401).send({message : "Unauthorized Access"})
+      }
+
+      const token = authHeader.split(' ')[1];
+
+      if(!token){
+        return res.status(401).send({message : "Unauthorized Access"})
+      }
+
+      try {
+        // Verify The Token
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        req.user = decodedToken;
+        console.log("Decoded token:", decodedToken);
+        next();
+      } catch (error) {
+        console.error('Token verification failed:', error);
+        return res.status(401).send({message : "Invalid Token"});
+      }
+    }
+
+//is a middleware for Express.js. Its purpose is to check whether the current user is an admin before allowing them to access certain route
+    const verifyAdmin = async (req, res, next) => {
+  const email = req.user?.email;   
+
+  if (!email) {
+    return res.status(401).send({ message: 'Unauthorized Access' });
+  }
+
+  const user = await usersCollection.findOne({ email });
+  if (!user || user.role !== 'admin') {
+    return res.status(403).send({ message: 'Forbidden Access' });
+  }
+
+  next();
+};
 // notifications apis
-    app.get("/notifications/:userEmail", async (req, res) => {
+    app.get("/notifications/:userEmail",verifyFirebaseToken, async (req, res) => {
   try {
     const { userEmail } = req.params;
     const notifications = await notificationsCollection
@@ -55,7 +112,7 @@ async function run() {
   }
 });
 
-app.patch("/notifications/:id/read", async (req, res) => {
+app.patch("/notifications/:id/read", verifyFirebaseToken,async (req, res) => {
   try {
     const { id } = req.params;
     await notificationsCollection.updateOne(
@@ -69,7 +126,7 @@ app.patch("/notifications/:id/read", async (req, res) => {
   }
 });
 
-app.patch("/notifications/:email/read-all", async (req, res) => {
+app.patch("/notifications/:email/read-all",verifyFirebaseToken, async (req, res) => {
   try {
     const { email } = req.params;
     await notificationsCollection.updateMany(
@@ -83,7 +140,7 @@ app.patch("/notifications/:email/read-all", async (req, res) => {
   }
 });
 
-app.delete("/notifications/:email/clear-all", async (req, res) => {
+app.delete("/notifications/:email/clear-all",verifyFirebaseToken, async (req, res) => {
   try {
     const { email } = req.params;
     await notificationsCollection.deleteMany({ userEmail: email });
@@ -96,7 +153,7 @@ app.delete("/notifications/:email/clear-all", async (req, res) => {
 
     // ------------------ ADMIN APIs ------------------
     // Get all users with optional search
-    app.get("/users", async (req, res) => {
+    app.get("/users", verifyFirebaseToken, verifyAdmin,  async (req, res) => {
       try {
         const search = req.query.search || "";
         const query = search ? { name: { $regex: search, $options: "i" } } : {};
@@ -108,7 +165,7 @@ app.delete("/notifications/:email/clear-all", async (req, res) => {
     });
 
     // Admin stats
-    app.get("/admin/stats", async (req, res) => {
+    app.get("/admin/stats", verifyFirebaseToken, verifyAdmin,  async (req, res) => {
       try {
         const totalUsers = await usersCollection.countDocuments();
         const totalPosts = await postsCollection.countDocuments();
@@ -120,7 +177,7 @@ app.delete("/notifications/:email/clear-all", async (req, res) => {
     });
 
     // Toggle user role
-    app.patch("/admin/users/:id/toggle-role", async (req, res) => {
+    app.patch("/admin/users/:id/toggle-role",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params;
         const user = await usersCollection.findOne({ _id: new ObjectId(id) });
@@ -134,7 +191,7 @@ app.delete("/notifications/:email/clear-all", async (req, res) => {
     });
 
     // Get all reported comments
-app.get("/admin/reports", async (req, res) => {
+app.get("/admin/reports",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
   try {
     const reports = await reportsCollection.find().sort({ date: -1 }).toArray();
     // Optionally, populate comment details
@@ -152,7 +209,7 @@ res.json(populatedReports);
 });
 
 // Take action on a report
-app.patch("/admin/reports/:id/action", async (req, res) => {
+app.patch("/admin/reports/:id/action",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
   try {
     const { action } = req.body; // "Reviewed", "DeleteComment", "WarnUser", "Dismiss"
     const { id } = req.params;
@@ -217,7 +274,7 @@ app.patch("/admin/reports/:id/action", async (req, res) => {
     });
 
     // Update user
-    app.put("/users/:email", async (req, res) => {
+    app.put("/users/:email",verifyFirebaseToken, async (req, res) => {
       try {
         const { email } = req.params;
         const updateData = req.body;
@@ -231,7 +288,7 @@ app.patch("/admin/reports/:id/action", async (req, res) => {
 
     // ------------------ POSTS APIs ------------------
     // Create post
-    app.post("/posts", async (req, res) => {
+    app.post("/posts",verifyFirebaseToken, async (req, res) => {
       try {
         const postData = req.body;
         if (!postData.authorEmail || !postData.title) return res.status(400).json({ message: "authorEmail and title are required" });
@@ -309,7 +366,7 @@ app.patch("/admin/reports/:id/action", async (req, res) => {
     });
 
     // Delete post
-    app.delete("/posts/:id", async (req, res) => {
+    app.delete("/posts/:id", verifyFirebaseToken,async (req, res) => {
       const { id } = req.params;
       try {
         const result = await postsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -321,7 +378,7 @@ app.patch("/admin/reports/:id/action", async (req, res) => {
     });
 
     // Vote on post
-    app.patch("/posts/vote/:id", async (req, res) => {
+    app.patch("/posts/vote/:id",verifyFirebaseToken, async (req, res) => {
       const { id } = req.params;
       const { type, userEmail } = req.body;
       if (!["upvote", "downvote"].includes(type)) return res.status(400).json({ error: "Invalid vote type" });
@@ -475,7 +532,7 @@ app.get("/tags/with-counts", async (req, res) => {
     });
 
     // Add comment/reply
-    app.post("/comments", async (req, res) => {
+    app.post("/comments",verifyFirebaseToken, async (req, res) => {
       try {
         const { postId, text, userEmail, userName, userPhoto, parentId = null } = req.body;
         if (!postId || !text || !userEmail) return res.status(400).json({ message: "Missing fields" });
@@ -488,7 +545,7 @@ app.get("/tags/with-counts", async (req, res) => {
     });
 
     // Vote on comment
-    app.patch("/comments/vote/:id", async (req, res) => {
+    app.patch("/comments/vote/:id",verifyFirebaseToken, async (req, res) => {
       const { id } = req.params;
       const { type, userEmail } = req.body;
       const comment = await commentsCollection.findOne({ _id: new ObjectId(id) });
@@ -511,7 +568,7 @@ app.get("/tags/with-counts", async (req, res) => {
 
     
  // Report comment
-app.patch("/comments/report/:id", async (req, res) => {
+app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
   try {
     const { id } = req.params;
     const { userEmail, reason } = req.body;
@@ -556,7 +613,7 @@ app.patch("/comments/report/:id", async (req, res) => {
 
 
     // Edit comment
-    app.patch("/comments/:id", async (req, res) => {
+    app.patch("/comments/:id",verifyFirebaseToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { text, userEmail } = req.body;
@@ -572,7 +629,7 @@ app.patch("/comments/report/:id", async (req, res) => {
     });
 
     // Delete comment
-    app.delete("/comments/:id", async (req, res) => {
+    app.delete("/comments/:id",verifyFirebaseToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { userEmail } = req.body;
