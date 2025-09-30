@@ -8,20 +8,22 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const admin = require("firebase-admin");
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 
 // ------------------ MIDDLEWARE ------------------
 app.use(
   cors({
-    origin: ['http://localhost:5173'], 
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    origin: ['http://localhost:5173','https://forum-x-auth.web.app'], 
+    methods: ["GET", "POST", "PUT", "DELETE","PATCH"],
     credentials: true,
   })
 );
 app.use(express.json());
 
-const serviceAccount = require("./forum-x-auth-firebase-admin-key.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
+
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -53,7 +55,7 @@ async function run() {
     reportsCollection = db.collection("reports");
     notificationsCollection = db.collection("notifications"); 
 
-    console.log("MongoDB connected");
+  
 
 
       // Custom MiddleWares
@@ -99,6 +101,7 @@ async function run() {
   next();
 };
 // notifications apis
+
     app.get("/notifications/:userEmail",verifyFirebaseToken, async (req, res) => {
   try {
     const { userEmail } = req.params;
@@ -596,7 +599,7 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
       status: "Pending"
     });
 
-    // *** NEW: create a notification for the comment author ***
+
     await notificationsCollection.insertOne({
       userEmail: comment.userEmail, // the user who made the comment
       message: `Your comment has been reported for: "${reason}"`,
@@ -773,7 +776,7 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
-    console.log("APIs ready ✅");
+
 
   } finally {
     // Do not close client in dev
