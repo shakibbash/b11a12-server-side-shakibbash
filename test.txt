@@ -1,0 +1,13 @@
+✅ Always initialize:
+
+DB connection
+
+Collections
+
+Middleware
+
+Routes (including /)
+
+Start listening (app.listen)
+
+…inside the same async run() block. This guarantees the server is fully ready before handling requests.

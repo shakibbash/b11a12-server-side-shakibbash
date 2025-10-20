@@ -100,151 +100,11 @@ async function run() {
 
   next();
 };
-// notifications apis
 
-    app.get("/notifications/:userEmail",verifyFirebaseToken, async (req, res) => {
-  try {
-    const { userEmail } = req.params;
-    const notifications = await notificationsCollection
-      .find({ userEmail })
-      .sort({ date: -1 })
-      .toArray();
-    res.json(notifications);
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
+
+app.get("/", (req, res) => {
+  res.send("Forum-X Server is running...");
 });
-
-app.patch("/notifications/:id/read", verifyFirebaseToken,async (req, res) => {
-  try {
-    const { id } = req.params;
-    await notificationsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { read: true } }
-    );
-    res.json({ message: "Notification marked as read" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-app.patch("/notifications/:email/read-all",verifyFirebaseToken, async (req, res) => {
-  try {
-    const { email } = req.params;
-    await notificationsCollection.updateMany(
-      { userEmail: email },
-      { $set: { read: true } }
-    );
-    res.json({ message: "All notifications marked as read" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-app.delete("/notifications/:email/clear-all",verifyFirebaseToken, async (req, res) => {
-  try {
-    const { email } = req.params;
-    await notificationsCollection.deleteMany({ userEmail: email });
-    res.json({ message: "All notifications cleared" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-    // ------------------ ADMIN APIs ------------------
-    // Get all users with optional search
-    app.get("/users", verifyFirebaseToken, verifyAdmin,  async (req, res) => {
-      try {
-        const search = req.query.search || "";
-        const query = search ? { name: { $regex: search, $options: "i" } } : {};
-        const users = await usersCollection.find(query).toArray();
-        res.send(users);
-      } catch (error) {
-        res.status(500).send({ message: "Server Error" });
-      }
-    });
-
-    // Admin stats
-    app.get("/admin/stats", verifyFirebaseToken, verifyAdmin,  async (req, res) => {
-      try {
-        const totalUsers = await usersCollection.countDocuments();
-        const totalPosts = await postsCollection.countDocuments();
-        const totalComments = await commentsCollection.countDocuments();
-        res.json({ totalUsers, totalPosts, totalComments });
-      } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-      }
-    });
-
-    // Toggle user role
-    app.patch("/admin/users/:id/toggle-role",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
-      try {
-        const { id } = req.params;
-        const user = await usersCollection.findOne({ _id: new ObjectId(id) });
-        if (!user) return res.status(404).json({ message: "User not found" });
-        const newRole = user.role === "admin" ? "user" : "admin";
-        await usersCollection.updateOne({ _id: new ObjectId(id) }, { $set: { role: newRole } });
-        res.json({ message: `User role updated to ${newRole}`, role: newRole });
-      } catch (err) {
-        res.status(500).json({ message: "Server error", error: err.message });
-      }
-    });
-
-    // Get all reported comments
-app.get("/admin/reports",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
-  try {
-    const reports = await reportsCollection.find().sort({ date: -1 }).toArray();
-    // Optionally, populate comment details
-   const populatedReports = await Promise.all(
-  reports.map(async (r) => {
-    const comment = await commentsCollection.findOne({ _id: new ObjectId(r.commentId) });
-    return { ...r, commentId: comment || null };  // fallback if comment deleted
-  })
-);
-res.json(populatedReports);
-;
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-});
-
-// Take action on a report
-app.patch("/admin/reports/:id/action",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
-  try {
-    const { action } = req.body; // "Reviewed", "DeleteComment", "WarnUser", "Dismiss"
-    const { id } = req.params;
-
-    const report = await reportsCollection.findOne({ _id: new ObjectId(id) });
-    if (!report) return res.status(404).json({ message: "Report not found" });
-
-    switch(action) {
-      case "Reviewed":
-        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "Reviewed" } });
-        break;
-      case "DeleteComment":
-        await commentsCollection.deleteOne({ _id: new ObjectId(report.commentId) });
-        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "ActionTaken" } });
-        break;
-      case "WarnUser":
-        // Optional: store warning in usersCollection
-        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "ActionTaken" } });
-        break;
-      case "Dismiss":
-        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "Dismissed" } });
-        break;
-      default:
-        return res.status(400).json({ message: "Invalid action" });
-    }
-
-    res.json({ message: "Action taken successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-});
-
     // ------------------ USER APIs ------------------
     // Create or update user
     app.post("/users", async (req, res) => {
@@ -645,6 +505,150 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
         res.status(500).json({ message: "Server error" });
       }
     });
+        // ------------------ ADMIN APIs ------------------
+    // Get all users with optional search
+    app.get("/users", verifyFirebaseToken, verifyAdmin,  async (req, res) => {
+      try {
+        const search = req.query.search || "";
+        const query = search ? { name: { $regex: search, $options: "i" } } : {};
+        const users = await usersCollection.find(query).toArray();
+        res.send(users);
+      } catch (error) {
+        res.status(500).send({ message: "Server Error" });
+      }
+    });
+
+    // Admin stats
+    app.get("/admin/stats", verifyFirebaseToken, verifyAdmin,  async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments();
+        const totalPosts = await postsCollection.countDocuments();
+        const totalComments = await commentsCollection.countDocuments();
+        res.json({ totalUsers, totalPosts, totalComments });
+      } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+      }
+    });
+
+    // Toggle user role
+    app.patch("/admin/users/:id/toggle-role",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        const newRole = user.role === "admin" ? "user" : "admin";
+        await usersCollection.updateOne({ _id: new ObjectId(id) }, { $set: { role: newRole } });
+        res.json({ message: `User role updated to ${newRole}`, role: newRole });
+      } catch (err) {
+        res.status(500).json({ message: "Server error", error: err.message });
+      }
+    });
+
+    // Get all reported comments
+app.get("/admin/reports",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
+  try {
+    const reports = await reportsCollection.find().sort({ date: -1 }).toArray();
+    // Optionally, populate comment details
+   const populatedReports = await Promise.all(
+  reports.map(async (r) => {
+    const comment = await commentsCollection.findOne({ _id: new ObjectId(r.commentId) });
+    return { ...r, commentId: comment || null };  // fallback if comment deleted
+  })
+);
+res.json(populatedReports);
+;
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+// Take action on a report
+app.patch("/admin/reports/:id/action",  verifyFirebaseToken, verifyAdmin, async (req, res) => {
+  try {
+    const { action } = req.body; // "Reviewed", "DeleteComment", "WarnUser", "Dismiss"
+    const { id } = req.params;
+
+    const report = await reportsCollection.findOne({ _id: new ObjectId(id) });
+    if (!report) return res.status(404).json({ message: "Report not found" });
+
+    switch(action) {
+      case "Reviewed":
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "Reviewed" } });
+        break;
+      case "DeleteComment":
+        await commentsCollection.deleteOne({ _id: new ObjectId(report.commentId) });
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "ActionTaken" } });
+        break;
+      case "WarnUser":
+        // Optional: store warning in usersCollection
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "ActionTaken" } });
+        break;
+      case "Dismiss":
+        await reportsCollection.updateOne({ _id: new ObjectId(id) }, { $set: { status: "Dismissed" } });
+        break;
+      default:
+        return res.status(400).json({ message: "Invalid action" });
+    }
+
+    res.json({ message: "Action taken successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+// notifications apis
+
+    app.get("/notifications/:userEmail",verifyFirebaseToken, async (req, res) => {
+  try {
+    const { userEmail } = req.params;
+    const notifications = await notificationsCollection
+      .find({ userEmail })
+      .sort({ date: -1 })
+      .toArray();
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+app.patch("/notifications/:id/read", verifyFirebaseToken,async (req, res) => {
+  try {
+    const { id } = req.params;
+    await notificationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { read: true } }
+    );
+    res.json({ message: "Notification marked as read" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.patch("/notifications/:email/read-all",verifyFirebaseToken, async (req, res) => {
+  try {
+    const { email } = req.params;
+    await notificationsCollection.updateMany(
+      { userEmail: email },
+      { $set: { read: true } }
+    );
+    res.json({ message: "All notifications marked as read" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.delete("/notifications/:email/clear-all",verifyFirebaseToken, async (req, res) => {
+  try {
+    const { email } = req.params;
+    await notificationsCollection.deleteMany({ userEmail: email });
+    res.json({ message: "All notifications cleared" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 
     // ------------------ ANNOUNCEMENTS APIs ------------------
     // Create, get, update, delete
@@ -737,6 +741,39 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
     });
 
     // ------------------ PAYMENT APIs ------------------
+ app.get("/membership-payments", async (req, res) => {
+  try {
+    const payments = await paymentsCollection
+      .find({})
+      .sort({ date: -1 })
+      .toArray();
+
+    if (!payments.length) {
+      return res.status(404).json({ success: false, message: "No payments found" });
+    }
+
+    // Use existing amount
+    const formattedPayments = payments.map((p) => ({
+      ...p,
+      amount: p.amount || 0,  // ensure amount exists
+    }));
+
+    const totalAmount = formattedPayments.reduce((sum, p) => sum + p.amount, 0);
+
+    res.json({
+      success: true,
+      totalPayments: formattedPayments.length,
+      totalAmount,
+      data: formattedPayments,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
+
+
+
     app.post("/create-membership-intent", async (req, res) => {
       try {
         const { amountInCents, membershipType, userId } = req.body;
@@ -747,17 +784,38 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
       }
     });
 
-    app.post("/membership-payments", async (req, res) => {
-      try {
-        const payment = req.body;
-        const result = await paymentsCollection.insertOne(payment);
-        const userUpdate = await usersCollection.updateOne({ uid: payment.userId }, { $set: { membership: true, badge: "gold" } });
-        if (userUpdate.matchedCount === 0) return res.status(404).json({ success: false, message: "User not found, but payment recorded" });
-        res.json({ success: true, insertedId: result.insertedId, message: "Payment recorded and user membership updated successfully" });
-      } catch (err) {
-        res.status(500).json({ success: false, message: "Server error", error: err.message });
-      }
+app.post("/membership-payments", async (req, res) => {
+  try {
+    const { amountInCents, membershipType, userId } = req.body;
+
+    if (!amountInCents || !userId) {
+      return res.status(400).json({ success: false, message: "Missing amount or userId" });
+    }
+
+    const payment = {
+      userId,
+      membershipType,
+      amountInCents,
+      date: new Date(),
+    };
+
+    const result = await paymentsCollection.insertOne(payment);
+
+    const userUpdate = await usersCollection.updateOne(
+      { uid: userId },
+      { $set: { membership: true, badge: "gold" } }
+    );
+
+    res.json({
+      success: true,
+      insertedId: result.insertedId,
+      message: "Payment recorded and user membership updated successfully",
     });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error", error: err.message });
+  }
+});
+
 
     app.get("/stats/counts", async (req, res) => {
   try {
@@ -778,16 +836,15 @@ app.patch("/comments/report/:id", verifyFirebaseToken,async (req, res) => {
 });
 
 
+app.listen(port, () => {
+  console.log(`Forum-X app listening on port ${port}`);
+});
+
   } finally {
     // Do not close client in dev
   }
 }
 
-run().catch(console.dir);
-
-// ------------------ HEALTH CHECK ------------------
+run().catch(err => console.error("Failed to start server:", err));
 
 
-app.listen(port, () => {
-  console.log(`Forum-X app listening on port ${port}`);
-});
